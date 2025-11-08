@@ -1,25 +1,39 @@
 # ==============================
-# SLIMNESS PREDICTION & HEALTH ANALYSIS WEB APP
+# COMPLETE ENHANCED SLIMNESS PREDICTION WITH DATASET VISUALIZATION
 # ==============================
 
 # Install dependencies
-!pip install flask==2.3.3 pyngrok==5.0.0 pandas scikit-learn numpy --quiet
-!pkill ngrok
+!pip install flask==2.3.3 pyngrok==5.0.0 pandas scikit-learn numpy fpdf reportlab matplotlib seaborn --quiet
 
-# Set ngrok auth token
-!ngrok config add-authtoken 34jdHpeAW8lmm7tBjxRsE8fv4xO_3cLKLJ8jhwWZUyPLZdhfn
+# IMPORTANT: Set your ngrok auth token here
+NGROK_AUTH_TOKEN = "35CPeS8HuqUeP7yUlOMzLeQN1ar_3xk14KY9p6kCoHHJTBejC"
 
 import os
-import sys
-from flask import Flask, render_template_string, request, jsonify
+import json
+import datetime
+import base64
+from io import BytesIO
+from flask import Flask, render_template_string, request, jsonify, send_file
 from pyngrok import ngrok
 import pandas as pd
 import numpy as np
 from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import LabelEncoder, StandardScaler
+from sklearn.metrics import accuracy_score
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+import seaborn as sns
 import warnings
 warnings.filterwarnings('ignore')
+
+# Set ngrok auth token
+if NGROK_AUTH_TOKEN != "YOUR_NGROK_AUTH_TOKEN_HERE":
+    ngrok.set_auth_token(NGROK_AUTH_TOKEN)
+else:
+    print("\n⚠️  WARNING: NGROK AUTH TOKEN NOT SET!")
+    exit()
 
 # Create Flask app
 app = Flask(__name__)
@@ -30,8 +44,99 @@ scaler = None
 label_encoders = {}
 target_encoder = None
 feature_columns = []
+dataset_df = None
 
-# HTML Template
+# Data storage file
+DATA_FILE = 'patient_records.json'
+
+# Initialize data storage
+def init_data_storage():
+    if not os.path.exists(DATA_FILE):
+        with open(DATA_FILE, 'w') as f:
+            json.dump([], f)
+
+# Load patient records
+def load_patient_records():
+    try:
+        with open(DATA_FILE, 'r') as f:
+            return json.load(f)
+    except:
+        return []
+
+# Save patient record
+def save_patient_record(record):
+    records = load_patient_records()
+    records.append(record)
+    with open(DATA_FILE, 'w') as f:
+        json.dump(records, f, indent=2)
+
+# Generate pie charts
+def generate_pie_charts():
+    global dataset_df
+
+    fig, axes = plt.subplots(2, 3, figsize=(18, 12))
+    fig.suptitle('Dataset Distribution Analysis', fontsize=20, fontweight='bold')
+
+    # Read original dataset for proper labels
+    df_original = pd.read_csv('augmented_obesity_lifestyle_dataset (1).csv')
+
+    # 1. Category Distribution
+    category_counts = df_original['Category'].value_counts()
+    colors1 = ['#ff6b6b', '#4ecdc4', '#45b7d1', '#ffa726']
+    axes[0, 0].pie(category_counts.values, labels=category_counts.index, autopct='%1.1f%%',
+                   startangle=90, colors=colors1, textprops={'fontsize': 11, 'weight': 'bold'})
+    axes[0, 0].set_title('Category Distribution', fontsize=14, fontweight='bold')
+
+    # 2. Gender Distribution
+    gender_counts = df_original['Gender'].value_counts()
+    colors2 = ['#667eea', '#764ba2']
+    axes[0, 1].pie(gender_counts.values, labels=gender_counts.index, autopct='%1.1f%%',
+                   startangle=90, colors=colors2, textprops={'fontsize': 11, 'weight': 'bold'})
+    axes[0, 1].set_title('Gender Distribution', fontsize=14, fontweight='bold')
+
+    # 3. Physical Activity Distribution
+    activity_counts = df_original['PhysicalActivity'].value_counts()
+    colors3 = ['#ff6b6b', '#ffa726', '#66bb6a', '#42a5f5']
+    axes[0, 2].pie(activity_counts.values, labels=activity_counts.index, autopct='%1.1f%%',
+                   startangle=90, colors=colors3, textprops={'fontsize': 11, 'weight': 'bold'})
+    axes[0, 2].set_title('Physical Activity Levels', fontsize=14, fontweight='bold')
+
+    # 4. High Calorie Food Consumption
+    calorie_counts = df_original['FrequentConsumptionHighCalorieFood'].value_counts()
+    colors4 = ['#66bb6a', '#ff6b6b']
+    axes[1, 0].pie(calorie_counts.values, labels=calorie_counts.index, autopct='%1.1f%%',
+                   startangle=90, colors=colors4, textprops={'fontsize': 11, 'weight': 'bold'})
+    axes[1, 0].set_title('High Calorie Food Consumption', fontsize=14, fontweight='bold')
+
+    # 5. Vegetable Consumption
+    veg_counts = df_original['FrequentVegetableConsumption'].value_counts()
+    colors5 = ['#66bb6a', '#ffa726']
+    axes[1, 1].pie(veg_counts.values, labels=veg_counts.index, autopct='%1.1f%%',
+                   startangle=90, colors=colors5, textprops={'fontsize': 11, 'weight': 'bold'})
+    axes[1, 1].set_title('Vegetable Consumption', fontsize=14, fontweight='bold')
+
+    # 6. Age Groups
+    age_bins = [0, 20, 30, 40, 50, 100]
+    age_labels = ['0-20', '21-30', '31-40', '41-50', '50+']
+    df_original['AgeGroup'] = pd.cut(df_original['Age'], bins=age_bins, labels=age_labels)
+    age_group_counts = df_original['AgeGroup'].value_counts()
+    colors6 = ['#ff6b6b', '#ffa726', '#66bb6a', '#42a5f5', '#ab47bc']
+    axes[1, 2].pie(age_group_counts.values, labels=age_group_counts.index, autopct='%1.1f%%',
+                   startangle=90, colors=colors6, textprops={'fontsize': 11, 'weight': 'bold'})
+    axes[1, 2].set_title('Age Group Distribution', fontsize=14, fontweight='bold')
+
+    plt.tight_layout()
+
+    # Convert to base64
+    buffer = BytesIO()
+    plt.savefig(buffer, format='png', dpi=100, bbox_inches='tight')
+    buffer.seek(0)
+    image_base64 = base64.b64encode(buffer.read()).decode()
+    plt.close()
+
+    return image_base64
+
+# Complete HTML Template
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="en">
@@ -43,40 +148,98 @@ HTML_TEMPLATE = """
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: linear-gradient(135deg, #74b9ff 0%, #0984e3 100%);
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             min-height: 100vh;
             padding: 20px;
         }
         .container {
-            max-width: 900px;
+            max-width: 1400px;
             margin: 0 auto;
             background: white;
-            border-radius: 20px;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            border-radius: 25px;
+            box-shadow: 0 25px 80px rgba(0,0,0,0.3);
             padding: 40px;
+            position: relative;
+            overflow: hidden;
+        }
+        .container::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 8px;
+            background: linear-gradient(90deg, #ff6b6b, #ffa726, #66bb6a, #42a5f5, #ab47bc);
         }
         .header {
             text-align: center;
-            margin-bottom: 30px;
+            margin-bottom: 40px;
         }
         h1 {
             color: #2d3436;
-            margin-bottom: 10px;
-            font-size: 2.5em;
-            background: linear-gradient(135deg, #0984e3, #00b894);
+            margin-bottom: 15px;
+            font-size: 3em;
+            background: linear-gradient(135deg, #ff6b6b, #ffa726, #66bb6a, #42a5f5, #ab47bc);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
+            background-clip: text;
         }
         .subtitle {
             color: #636e72;
-            font-size: 1.2em;
-            margin-bottom: 20px;
+            font-size: 1.3em;
+            margin-bottom: 25px;
+            font-weight: 300;
+        }
+        .nav-container {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 15px;
+            padding: 5px;
+            margin-bottom: 30px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        }
+        .nav-tabs {
+            display: flex;
+            justify-content: space-between;
+        }
+        .nav-tab {
+            flex: 1;
+            padding: 18px 25px;
+            text-align: center;
+            cursor: pointer;
+            border-radius: 12px;
+            transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+            font-weight: 600;
+            color: white;
+            background: transparent;
+            border: none;
+            font-size: 1.1em;
+        }
+        .nav-tab:hover {
+            background: rgba(255,255,255,0.15);
+            transform: translateY(-3px);
+        }
+        .nav-tab.active {
+            background: white;
+            color: #667eea;
+            box-shadow: 0 8px 25px rgba(0,0,0,0.15);
+            transform: translateY(-2px);
+        }
+        .tab-content {
+            display: none;
+            animation: fadeIn 0.5s ease-in;
+        }
+        .tab-content.active {
+            display: block;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
         }
         .form-grid {
             display: grid;
             grid-template-columns: 1fr 1fr;
-            gap: 20px;
-            margin-bottom: 20px;
+            gap: 25px;
+            margin-bottom: 25px;
         }
         .form-group {
             display: flex;
@@ -88,244 +251,392 @@ HTML_TEMPLATE = """
         label {
             font-weight: 600;
             color: #2d3436;
-            margin-bottom: 8px;
-            font-size: 0.95em;
+            margin-bottom: 10px;
+            font-size: 1em;
         }
         input, select {
-            padding: 12px;
-            border: 2px solid #dfe6e9;
-            border-radius: 10px;
+            padding: 15px;
+            border: 2px solid #e0e0e0;
+            border-radius: 12px;
             font-size: 1em;
             transition: all 0.3s;
             background: #f8f9fa;
         }
         input:focus, select:focus {
             outline: none;
-            border-color: #74b9ff;
-            box-shadow: 0 0 0 3px rgba(116, 185, 255, 0.1);
+            border-color: #667eea;
+            box-shadow: 0 0 0 4px rgba(102, 126, 234, 0.1);
             background: white;
         }
         button {
-            grid-column: 1 / -1;
-            background: linear-gradient(135deg, #00b894 0%, #0984e3 100%);
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: white;
-            padding: 15px 30px;
+            padding: 18px 35px;
             border: none;
-            border-radius: 12px;
-            font-size: 1.1em;
+            border-radius: 15px;
+            font-size: 1.2em;
             font-weight: 600;
             cursor: pointer;
-            transition: transform 0.2s, box-shadow 0.2s;
-            margin-top: 20px;
+            transition: all 0.3s;
+            margin-top: 25px;
+            width: 100%;
+            box-shadow: 0 8px 25px rgba(102, 126, 234, 0.3);
         }
         button:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 10px 25px rgba(0, 184, 148, 0.4);
+            transform: translateY(-3px);
+            box-shadow: 0 15px 35px rgba(102, 126, 234, 0.4);
         }
-
-        /* Results Styling */
-        .result {
-            margin-top: 30px;
-            padding: 0;
-            border-radius: 15px;
-            overflow: hidden;
-            display: none;
-        }
-        .result.show { display: block; }
-        .result-header {
-            background: linear-gradient(135deg, #00b894 0%, #0984e3 100%);
-            color: white;
-            padding: 20px;
-            text-align: center;
-        }
-        .result-content {
-            padding: 25px;
-            background: #f8f9fa;
-        }
-        .result-card {
-            background: white;
-            padding: 20px;
-            margin: 15px 0;
-            border-radius: 12px;
-            border-left: 5px solid #74b9ff;
-            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
-        }
-        .result-card.warning { border-left-color: #e17055; }
-        .result-card.success { border-left-color: #00b894; }
-        .result-card.info { border-left-color: #74b9ff; }
-
-        .feature-list {
-            margin: 15px 0;
-        }
-        .feature-item {
-            padding: 10px;
-            margin: 8px 0;
-            background: #f1f2f6;
-            border-radius: 8px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-        .suggestions {
-            background: #fff3cd;
-            border-left: 5px solid #ffc107;
-            padding: 20px;
-            margin: 20px 0;
-            border-radius: 8px;
-        }
-        .suggestions h3 {
-            color: #856404;
-            margin-bottom: 15px;
-        }
-        .suggestions ul {
-            margin-left: 20px;
-        }
-        .suggestions li {
-            margin: 10px 0;
-            color: #856404;
-        }
-
         .loading {
             text-align: center;
-            padding: 30px;
+            padding: 40px;
             display: none;
         }
         .loading.show { display: block; }
         .spinner {
-            border: 4px solid #f3f3f3;
-            border-top: 4px solid #00b894;
+            border: 5px solid #f3f3f3;
+            border-top: 5px solid #667eea;
             border-radius: 50%;
-            width: 50px;
-            height: 50px;
+            width: 60px;
+            height: 60px;
             animation: spin 1s linear infinite;
-            margin: 0 auto 20px;
+            margin: 0 auto 25px;
         }
         @keyframes spin {
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
         }
-
+        .result {
+            margin-top: 30px;
+            padding: 0;
+            border-radius: 20px;
+            overflow: hidden;
+            display: none;
+        }
+        .result.show { display: block; }
+        .result-header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 25px;
+            text-align: center;
+        }
+        .result-content {
+            padding: 30px;
+            background: #f8f9fa;
+        }
+        .result-card {
+            background: white;
+            padding: 25px;
+            margin: 20px 0;
+            border-radius: 15px;
+            border-left: 6px solid #667eea;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+        }
+        .result-card h3 {
+            color: #667eea;
+            margin-bottom: 15px;
+        }
+        .result-card p {
+            margin: 10px 0;
+            line-height: 1.6;
+        }
+        .chart-container {
+            background: white;
+            padding: 30px;
+            border-radius: 15px;
+            margin: 20px 0;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+        }
+        .chart-container img {
+            width: 100%;
+            border-radius: 10px;
+        }
+        .data-table {
+            width: 100%;
+            overflow-x: auto;
+            background: white;
+            border-radius: 15px;
+            padding: 20px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.9em;
+        }
+        th {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 12px;
+            text-align: left;
+            position: sticky;
+            top: 0;
+        }
+        td {
+            padding: 10px;
+            border-bottom: 1px solid #e0e0e0;
+        }
+        tr:hover {
+            background: #f8f9fa;
+        }
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin: 20px 0;
+        }
+        .stat-card {
+            background: white;
+            padding: 20px;
+            border-radius: 15px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+            text-align: center;
+        }
+        .stat-value {
+            font-size: 2em;
+            font-weight: bold;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        .stat-label {
+            color: #636e72;
+            margin-top: 10px;
+        }
         @media (max-width: 768px) {
             .form-grid { grid-template-columns: 1fr; }
-            h1 { font-size: 2em; }
-            .container { padding: 20px; }
+            .nav-tabs { flex-direction: column; }
+            h1 { font-size: 2.2em; }
         }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
-            <h1>🏃‍♂️ Slimness Prediction & Health Analysis</h1>
-            <p class="subtitle">AI-Powered Analysis of Your Weight Status with Personalized Health Solutions</p>
+            <h1>🏃‍♂️ Slimness Prediction</h1>
+            <p class="subtitle">AI-Powered Health Assessment & Analytics</p>
         </div>
 
-        <form id="predictionForm">
-            <div class="form-grid">
-                <!-- Basic Information -->
-                <div class="form-group">
-                    <label for="height">📏 Height (meters)</label>
-                    <input type="number" id="height" step="0.01" required min="1.0" max="2.5" value="1.75" placeholder="e.g., 1.75">
-                </div>
-
-                <div class="form-group">
-                    <label for="weight">⚖️ Weight (kg)</label>
-                    <input type="number" id="weight" step="0.1" required min="30" max="200" value="68" placeholder="e.g., 68">
-                </div>
-
-                <div class="form-group">
-                    <label for="age">🎂 Age</label>
-                    <input type="number" id="age" required min="15" max="100" value="28" placeholder="e.g., 28">
-                </div>
-
-                <div class="form-group">
-                    <label for="gender">👤 Gender</label>
-                    <select id="gender" required>
-                        <option value="Male">Male</option>
-                        <option value="Female">Female</option>
-                    </select>
-                </div>
-
-                <!-- Lifestyle Information -->
-                <div class="form-group">
-                    <label for="activity">💪 Physical Activity Level</label>
-                    <select id="activity" required>
-                        <option value="Sedentary">Sedentary (Little to no exercise)</option>
-                        <option value="Light">Light (Light exercise 1-3 days/week)</option>
-                        <option value="Moderate" selected>Moderate (Moderate exercise 3-5 days/week)</option>
-                        <option value="High">High (Intense exercise 6-7 days/week)</option>
-                    </select>
-                </div>
-
-                <div class="form-group">
-                    <label for="steps">🚶‍♂️ Daily Steps</label>
-                    <input type="number" id="steps" required min="0" max="50000" value="8500" placeholder="e.g., 8500">
-                </div>
-
-                <div class="form-group">
-                    <label for="screenTime">📱 Screen Time (hours/day)</label>
-                    <input type="number" id="screenTime" step="0.5" required min="0" max="24" value="5" placeholder="e.g., 5">
-                </div>
-
-                <!-- Nutrition Information -->
-                <div class="form-group">
-                    <label for="protein">🥩 Protein Intake (g/day)</label>
-                    <input type="number" id="protein" required min="0" max="300" value="75" placeholder="e.g., 75">
-                </div>
-
-                <div class="form-group">
-                    <label for="water">💧 Water Intake (liters/day)</label>
-                    <input type="number" id="water" step="0.1" required min="0" max="10" value="2.5" placeholder="e.g., 2.5">
-                </div>
-
-                <div class="form-group">
-                    <label for="highCalorie">🍔 High-Calorie Food Consumption</label>
-                    <select id="highCalorie" required>
-                        <option value="no" selected>Rarely</option>
-                        <option value="yes">Frequently</option>
-                    </select>
-                </div>
-
-                <div class="form-group">
-                    <label for="vegetables">🥦 Vegetable Consumption</label>
-                    <select id="vegetables" required>
-                        <option value="yes" selected>Regularly</option>
-                        <option value="no">Rarely</option>
-                    </select>
-                </div>
-
-                <!-- Health Metrics -->
-                <div class="form-group">
-                    <label for="sleep">😴 Sleep Hours/Night</label>
-                    <input type="number" id="sleep" step="0.5" required min="0" max="24" value="7.5" placeholder="e.g., 7.5">
-                </div>
-
-                <div class="form-group">
-                    <label for="sleepQuality">⭐ Sleep Quality (1-10)</label>
-                    <input type="number" id="sleepQuality" required min="1" max="10" value="7" placeholder="e.g., 7">
-                </div>
-
-                <div class="form-group">
-                    <label for="stress">🧠 Stress Level (1-10)</label>
-                    <input type="number" id="stress" required min="1" max="10" value="4" placeholder="e.g., 4">
-                </div>
-
-                <button type="submit">
-                    🔍 Analyze My Health Status
-                </button>
+        <div class="nav-container">
+            <div class="nav-tabs">
+                <button class="nav-tab active" onclick="showTab('predict')">🔍 Prediction</button>
+                <button class="nav-tab" onclick="showTab('visualize')">📊 Data Visualization</button>
+                <button class="nav-tab" onclick="showTab('dataset')">📋 Dataset</button>
             </div>
-        </form>
-
-        <div class="loading" id="loading">
-            <div class="spinner"></div>
-            <p style="margin-top: 15px; color: #0984e3; font-weight: 600;">
-                Analyzing your health profile and generating personalized recommendations...
-            </p>
         </div>
 
-        <div class="result" id="result"></div>
+        <!-- Prediction Tab -->
+        <div id="predict" class="tab-content active">
+            <form id="predictionForm">
+                <div class="form-grid">
+                    <div class="form-group full-width">
+                        <h3 style="color: #667eea;">👤 Patient Information</h3>
+                    </div>
+                    <div class="form-group">
+                        <label>📛 Full Name</label>
+                        <input type="text" id="name" required>
+                    </div>
+                    <div class="form-group">
+                        <label>📧 Email</label>
+                        <input type="email" id="email" required>
+                    </div>
+                    <div class="form-group">
+                        <label>📞 Phone</label>
+                        <input type="tel" id="phone" required>
+                    </div>
+                    <div class="form-group">
+                        <label>📅 Date</label>
+                        <input type="date" id="date" required>
+                    </div>
+
+                    <div class="form-group full-width">
+                        <h3 style="color: #667eea;">📊 Health Metrics</h3>
+                    </div>
+                    <div class="form-group">
+                        <label>📏 Height (m)</label>
+                        <input type="number" id="height" step="0.01" value="1.75" required>
+                    </div>
+                    <div class="form-group">
+                        <label>⚖️ Weight (kg)</label>
+                        <input type="number" id="weight" step="0.1" value="68" required>
+                    </div>
+                    <div class="form-group">
+                        <label>🎂 Age</label>
+                        <input type="number" id="age" value="28" required>
+                    </div>
+                    <div class="form-group">
+                        <label>👤 Gender</label>
+                        <select id="gender" required>
+                            <option value="Male">Male</option>
+                            <option value="Female">Female</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>🏃 Physical Activity</label>
+                        <select id="activity" required>
+                            <option value="Sedentary">Sedentary</option>
+                            <option value="Light">Light</option>
+                            <option value="Moderate" selected>Moderate</option>
+                            <option value="High">High</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>🚶 Daily Steps</label>
+                        <input type="number" id="steps" value="8500" required>
+                    </div>
+                    <div class="form-group">
+                        <label>📱 Screen Time (h)</label>
+                        <input type="number" id="screenTime" step="0.5" value="5" required>
+                    </div>
+                    <div class="form-group">
+                        <label>🥩 Protein (g/day)</label>
+                        <input type="number" id="protein" value="75" required>
+                    </div>
+                    <div class="form-group">
+                        <label>💧 Water (L/day)</label>
+                        <input type="number" id="water" step="0.1" value="2.5" required>
+                    </div>
+                    <div class="form-group">
+                        <label>🍔 High-Calorie Food</label>
+                        <select id="highCalorie" required>
+                            <option value="no" selected>Rarely</option>
+                            <option value="yes">Frequently</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>🥦 Vegetables</label>
+                        <select id="vegetables" required>
+                            <option value="yes" selected>Regularly</option>
+                            <option value="no">Rarely</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>😴 Sleep (hours)</label>
+                        <input type="number" id="sleep" step="0.5" value="7.5" required>
+                    </div>
+                    <div class="form-group">
+                        <label>⭐ Sleep Quality (1-10)</label>
+                        <input type="number" id="sleepQuality" value="7" min="1" max="10" required>
+                    </div>
+                    <div class="form-group">
+                        <label>🧠 Stress Level (1-10)</label>
+                        <input type="number" id="stress" value="4" min="1" max="10" required>
+                    </div>
+
+                    <button type="submit" class="form-group full-width">
+                        🔍 Analyze Health Status
+                    </button>
+                </div>
+            </form>
+
+            <div class="loading" id="loading">
+                <div class="spinner"></div>
+                <p style="color: #667eea; font-weight: 600;">Analyzing your health profile...</p>
+            </div>
+
+            <div class="result" id="result"></div>
+        </div>
+
+        <!-- Visualization Tab -->
+        <div id="visualize" class="tab-content">
+            <h2 style="color: #667eea; margin-bottom: 20px;">📊 Dataset Distribution Analysis</h2>
+
+            <div class="stats-grid" id="statsGrid"></div>
+
+            <div class="chart-container">
+                <img id="pieCharts" src="" alt="Loading charts..." />
+            </div>
+        </div>
+
+        <!-- Dataset Tab -->
+        <div id="dataset" class="tab-content">
+            <h2 style="color: #667eea; margin-bottom: 20px;">📋 Training Dataset</h2>
+            <div class="data-table" id="dataTable"></div>
+        </div>
     </div>
 
     <script>
+        document.getElementById('date').value = new Date().toISOString().split('T')[0];
+
+        function showTab(tabName) {
+            const tabs = document.querySelectorAll('.tab-content');
+            const navTabs = document.querySelectorAll('.nav-tab');
+
+            tabs.forEach(tab => tab.classList.remove('active'));
+            navTabs.forEach(tab => tab.classList.remove('active'));
+
+            document.getElementById(tabName).classList.add('active');
+            event.target.classList.add('active');
+
+            if (tabName === 'visualize') {
+                loadVisualizations();
+            } else if (tabName === 'dataset') {
+                loadDataset();
+            }
+        }
+
+        async function loadVisualizations() {
+            try {
+                const response = await fetch('/get_visualizations');
+                const data = await response.json();
+
+                document.getElementById('pieCharts').src = 'data:image/png;base64,' + data.chart;
+
+                const statsHtml = `
+                    <div class="stat-card">
+                        <div class="stat-value">${data.stats.total_records}</div>
+                        <div class="stat-label">Total Records</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value">${data.stats.avg_age}</div>
+                        <div class="stat-label">Average Age</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value">${data.stats.avg_bmi}</div>
+                        <div class="stat-label">Average BMI</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value">${data.stats.male_percent}%</div>
+                        <div class="stat-label">Male</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value">${data.stats.female_percent}%</div>
+                        <div class="stat-label">Female</div>
+                    </div>
+                `;
+                document.getElementById('statsGrid').innerHTML = statsHtml;
+            } catch (error) {
+                console.error('Error loading visualizations:', error);
+            }
+        }
+
+        async function loadDataset() {
+            try {
+                const response = await fetch('/get_dataset');
+                const data = await response.json();
+
+                let tableHtml = '<table><thead><tr>';
+                data.columns.forEach(col => {
+                    tableHtml += `<th>${col}</th>`;
+                });
+                tableHtml += '</tr></thead><tbody>';
+
+                data.rows.slice(0, 100).forEach(row => {
+                    tableHtml += '<tr>';
+                    row.forEach(cell => {
+                        tableHtml += `<td>${cell}</td>`;
+                    });
+                    tableHtml += '</tr>';
+                });
+                tableHtml += '</tbody></table>';
+                tableHtml += `<p style="text-align: center; margin-top: 20px; color: #636e72;">Showing first 100 of ${data.total_rows} records</p>`;
+
+                document.getElementById('dataTable').innerHTML = tableHtml;
+            } catch (error) {
+                console.error('Error loading dataset:', error);
+            }
+        }
+
         document.getElementById('predictionForm').addEventListener('submit', async (e) => {
             e.preventDefault();
 
@@ -336,6 +647,10 @@ HTML_TEMPLATE = """
             result.classList.remove('show');
 
             const formData = {
+                name: document.getElementById('name').value,
+                email: document.getElementById('email').value,
+                phone: document.getElementById('phone').value,
+                date: document.getElementById('date').value,
                 height: parseFloat(document.getElementById('height').value),
                 weight: parseFloat(document.getElementById('weight').value),
                 age: parseInt(document.getElementById('age').value),
@@ -360,132 +675,137 @@ HTML_TEMPLATE = """
                 });
 
                 const data = await response.json();
-
                 loading.classList.remove('show');
 
-                if (data.error) {
-                    result.innerHTML = `
-                        <div class="result-header">
-                            <h2>❌ Error</h2>
-                        </div>
-                        <div class="result-content">
-                            <div class="result-card warning">
-                                <p>${data.error}</p>
-                            </div>
-                        </div>
-                    `;
-                } else {
-                    // Determine card color based on category
-                    const category = data.category.toLowerCase();
-                    let cardClass = 'info';
-                    if (category.includes('underweight')) cardClass = 'warning';
-                    if (category.includes('healthy')) cardClass = 'success';
-                    if (category.includes('obese')) cardClass = 'warning';
-
-                    result.innerHTML = `
-                        <div class="result-header">
-                            <h2>📊 Your Health Analysis Report</h2>
-                            <p style="margin-top: 10px; opacity: 0.9;">Comprehensive analysis based on your input data</p>
-                        </div>
-
-                        <div class="result-content">
-                            <!-- Main Prediction Card -->
-                            <div class="result-card ${cardClass}">
-                                <h3 style="color: #2d3436; margin-bottom: 15px;">🎯 Weight Status Prediction</h3>
-                                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
-                                    <div>
-                                        <strong>Predicted Category:</strong><br>
-                                        <span style="font-size: 1.2em; color: #0984e3;">${data.category}</span>
-                                    </div>
-                                    <div>
-                                        <strong>Confidence Score:</strong><br>
-                                        <span style="font-size: 1.2em; color: #00b894;">${(data.confidence * 100).toFixed(1)}%</span>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <!-- BMI Information -->
-                            <div class="result-card">
-                                <h3 style="color: #2d3436; margin-bottom: 15px;">⚖️ Body Mass Index (BMI) Analysis</h3>
-                                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
-                                    <div>
-                                        <strong>Your BMI:</strong><br>
-                                        <span style="font-size: 1.3em; font-weight: bold;">${data.bmi.toFixed(1)}</span>
-                                    </div>
-                                    <div>
-                                        <strong>Classification:</strong><br>
-                                        <span style="font-size: 1.1em; color: ${data.bmi_category === 'Normal weight' ? '#00b894' : '#e17055'}">
-                                            ${data.bmi_category}
-                                        </span>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <!-- Key Influencing Factors -->
-                            <div class="result-card">
-                                <h3 style="color: #2d3436; margin-bottom: 15px;">🔍 Top Influencing Factors</h3>
-                                <p style="margin-bottom: 15px; color: #636e72;">These factors had the most impact on your prediction:</p>
-                                <div class="feature-list">
-                                    ${data.top_features.map((f, index) => `
-                                        <div class="feature-item">
-                                            <div>
-                                                <strong>${f.feature.replace(/_/g, ' ').replace(/([A-Z])/g, ' $1')}:</strong>
-                                                ${f.value}
-                                            </div>
-                                            <div style="color: #0984e3; font-weight: 600;">
-                                                ${(f.importance * 100).toFixed(1)}%
-                                            </div>
-                                        </div>
-                                    `).join('')}
-                                </div>
-                            </div>
-
-                            <!-- Detailed Reasons Analysis -->
-                            <div class="result-card">
-                                <h3 style="color: #2d3436; margin-bottom: 15px;">🔬 Reasons Analysis</h3>
-                                <div style="line-height: 1.6;">
-                                    ${data.reasons.map(reason => `<p style="margin: 10px 0;">• ${reason}</p>`).join('')}
-                                </div>
-                            </div>
-
-                            <!-- Personalized Recommendations -->
-                            ${data.suggestions.length > 0 ? `
-                            <div class="suggestions">
-                                <h3>💡 Personalized Health Recommendations</h3>
-                                <ul>
-                                    ${data.suggestions.map(s => `<li>${s}</li>`).join('')}
-                                </ul>
-                            </div>
-                            ` : ''}
-
-                            <!-- Action Plan -->
-                            <div class="result-card success">
-                                <h3 style="color: #2d3436; margin-bottom: 15px;">📅 Recommended Action Plan</h3>
-                                <div style="line-height: 1.6;">
-                                    ${data.action_plan.map(step => `<p style="margin: 8px 0;">✅ ${step}</p>`).join('')}
-                                </div>
-                            </div>
-                        </div>
-                    `;
+                // Determine color scheme based on category
+                let categoryColor = '#667eea';
+                let categoryEmoji = '📊';
+                if (data.category === 'Underweight') {
+                    categoryColor = '#ff6b6b';
+                    categoryEmoji = '⚠️';
+                } else if (data.category === 'Healthy Slim') {
+                    categoryColor = '#66bb6a';
+                    categoryEmoji = '✅';
+                } else if (data.category === 'Overweight') {
+                    categoryColor = '#ffa726';
+                    categoryEmoji = '⚡';
+                } else if (data.category === 'Obese') {
+                    categoryColor = '#e74c3c';
+                    categoryEmoji = '🚨';
                 }
 
-                result.classList.add('show');
-                result.scrollIntoView({ behavior: 'smooth', block: 'start' });
-
-            } catch (error) {
-                loading.classList.remove('show');
                 result.innerHTML = `
-                    <div class="result-header">
-                        <h2>❌ Connection Error</h2>
+                    <div class="result-header" style="background: linear-gradient(135deg, ${categoryColor} 0%, ${categoryColor}dd 100%);">
+                        <h2>${categoryEmoji} Health Analysis Report</h2>
+                        <p style="font-size: 1.1em; margin-top: 10px;">${formData.name} - ${formData.date}</p>
                     </div>
                     <div class="result-content">
-                        <div class="result-card warning">
-                            <p>Failed to connect to analysis service: ${error.message}</p>
-                            <p style="margin-top: 10px;">Please check your connection and try again.</p>
+                        <div class="result-card" style="border-left-color: ${categoryColor};">
+                            <h3 style="color: ${categoryColor};">🎯 Prediction Results</h3>
+                            <p style="font-size: 1.2em; margin: 15px 0;"><strong>Category:</strong> <span style="color: ${categoryColor}; font-weight: bold; font-size: 1.3em;">${data.category}</span></p>
+                            <p><strong>AI Confidence:</strong> <span style="color: ${categoryColor}; font-weight: bold;">${(data.confidence * 100).toFixed(1)}%</span></p>
+                            <p><strong>BMI:</strong> <span style="font-weight: bold;">${data.bmi.toFixed(1)}</span> (${data.bmi_category})</p>
+                            <div style="margin-top: 15px; padding: 15px; background: ${categoryColor}15; border-radius: 10px;">
+                                <p style="margin: 0; font-size: 0.95em; color: #555;">
+                                    ${getCategoryDescription(data.category)}
+                                </p>
+                            </div>
+                        </div>
+                        <div class="result-card" style="border-left-color: #e67e22;">
+                            <h3 style="color: #e67e22;">🔍 Why You're Classified as "${data.category}"</h3>
+                            <p style="margin-bottom: 15px; color: #666;">Based on your health metrics, here are the key factors:</p>
+                            ${data.reasons.map((r, i) => `
+                                <div style="margin: 12px 0; padding: 10px; background: #fef5e7; border-left: 3px solid #e67e22; border-radius: 5px;">
+                                    <p style="margin: 0;"><strong>${i + 1}.</strong> ${r}</p>
+                                </div>
+                            `).join('')}
+                        </div>
+                        <div class="result-card" style="border-left-color: #3498db;">
+                            <h3 style="color: #3498db;">📈 Top 5 Contributing Factors</h3>
+                            <p style="margin-bottom: 15px; color: #666;">These factors had the biggest impact on your prediction:</p>
+                            ${data.top_features.map((f, i) => {
+                                const percentage = (f.importance * 100).toFixed(1);
+                                const barWidth = Math.min(percentage * 2, 100);
+                                return `
+                                    <div style="margin: 15px 0;">
+                                        <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
+                                            <strong>${i + 1}. ${f.feature}:</strong>
+                                            <span style="color: #3498db; font-weight: bold;">${f.value}</span>
+                                        </div>
+                                        <div style="background: #ecf0f1; border-radius: 10px; overflow: hidden; height: 8px;">
+                                            <div style="background: linear-gradient(90deg, #3498db, #2980b9); height: 100%; width: ${barWidth}%;"></div>
+                                        </div>
+                                        <p style="font-size: 0.85em; color: #7f8c8d; margin-top: 3px;">Impact: ${percentage}%</p>
+                                    </div>
+                                `;
+                            }).join('')}
+                        </div>
+                        <div class="result-card" style="border-left-color: #9b59b6;">
+                            <h3 style="color: #9b59b6;">💡 Personalized Recommendations</h3>
+                            <p style="margin-bottom: 15px; color: #666;">Follow these evidence-based recommendations to reach your health goals:</p>
+                            ${data.suggestions.map((s, i) => `
+                                <div style="margin: 12px 0; padding: 12px; background: #f8f4fc; border-left: 3px solid #9b59b6; border-radius: 5px;">
+                                    <p style="margin: 0;"><span style="color: #9b59b6; font-weight: bold;">✓</span> ${s}</p>
+                                </div>
+                            `).join('')}
+                        </div>
+                        <div class="result-card" style="border-left-color: #16a085;">
+                            <h3 style="color: #16a085;">📅 Your 8-Week Transformation Plan</h3>
+                            <p style="margin-bottom: 20px; color: #666;">Follow this progressive plan for sustainable results:</p>
+                            ${data.action_plan.map((a, i) => {
+                                const weekMatch = a.match(/Week (\d+)-(\d+)/);
+                                const isWeekPlan = weekMatch !== null;
+                                return `
+                                    <div style="margin: 15px 0; padding: 15px; background: ${isWeekPlan ? '#e8f8f5' : '#fff3e0'}; border-left: 4px solid ${isWeekPlan ? '#16a085' : '#f39c12'}; border-radius: 8px;">
+                                        <p style="margin: 0; font-weight: ${isWeekPlan ? 'bold' : 'normal'};">${isWeekPlan ? '📆' : '🔄'} ${a}</p>
+                                    </div>
+                                `;
+                            }).join('')}
+                            <div style="margin-top: 20px; padding: 15px; background: #d5f4e6; border-radius: 10px; border: 2px dashed #16a085;">
+                                <p style="margin: 0; text-align: center; font-weight: bold; color: #16a085;">
+                                    💪 Remember: Consistency is key! Small daily actions lead to big results.
+                                </p>
+                            </div>
+                        </div>
+                        <div class="result-card" style="border-left-color: #e74c3c; background: linear-gradient(135deg, #fff 0%, #fee 100%);">
+                            <h3 style="color: #e74c3c;">⚕️ Important Health Notice</h3>
+                            <p style="margin: 10px 0; line-height: 1.8;">
+                                <strong>Disclaimer:</strong> This analysis is for informational purposes only and should not replace professional medical advice. 
+                                ${getCategoryWarning(data.category, data.bmi)}
+                            </p>
                         </div>
                     </div>
                 `;
+                
+                // Helper function for category descriptions
+                function getCategoryDescription(category) {
+                    const descriptions = {
+                        'Underweight': 'Being underweight can lead to nutritional deficiencies, weakened immune system, and decreased muscle mass. It\'s important to gain weight gradually through healthy, nutrient-dense foods.',
+                        'Healthy Slim': 'Congratulations! Your weight is in the healthy range. Maintain your current lifestyle habits to preserve your health and prevent future weight issues.',
+                        'Overweight': 'Being overweight increases risk for heart disease, diabetes, and joint problems. Small, sustainable lifestyle changes can help you reach a healthier weight.',
+                        'Obese': 'Obesity significantly increases health risks including heart disease, type 2 diabetes, sleep apnea, and certain cancers. Professional medical support can help you safely lose weight.'
+                    };
+                    return descriptions[category] || 'Continue monitoring your health metrics.';
+                }
+                
+                // Helper function for category-specific warnings
+                function getCategoryWarning(category, bmi) {
+                    if (category === 'Underweight') {
+                        return 'Please consult with a healthcare provider or registered dietitian to address potential underlying causes and develop a safe weight gain plan.';
+                    } else if (category === 'Obese' || bmi >= 35) {
+                        return '<strong>We strongly recommend scheduling an appointment with your healthcare provider</strong> to discuss comprehensive weight management strategies, including potential medical interventions.';
+                    } else if (category === 'Overweight') {
+                        return 'Consider consulting with a healthcare provider or certified nutritionist to develop a personalized weight loss plan that\'s safe and effective for you.';
+                    } else {
+                        return 'Continue with regular health check-ups to maintain your healthy status.';
+                    }
+                }
+
                 result.classList.add('show');
+                result.scrollIntoView({ behavior: 'smooth' });
+            } catch (error) {
+                loading.classList.remove('show');
+                alert('Error: ' + error.message);
             }
         });
     </script>
@@ -493,29 +813,23 @@ HTML_TEMPLATE = """
 </html>
 """
 
-# Function to train the model
+# Train model function
 def train_model():
-    global rf_multi, scaler, label_encoders, target_encoder, feature_columns
+    global rf_multi, scaler, label_encoders, target_encoder, feature_columns, dataset_df
 
-    print("📊 Loading and preparing dataset...")
-    # Load your dataset
-    df = pd.read_csv('augmented_obesity_lifestyle_dataset (1).csv')
+    print("📊 Loading dataset...")
+    dataset_df = pd.read_csv('augmented_obesity_lifestyle_dataset (1).csv')
 
-    print("🔧 Preprocessing data...")
-
-    # Handle categorical variables
     categorical_columns = ['Gender', 'PhysicalActivity', 'FrequentConsumptionHighCalorieFood', 'FrequentVegetableConsumption']
 
     for col in categorical_columns:
         le = LabelEncoder()
-        df[col] = le.fit_transform(df[col])
+        dataset_df[col] = le.fit_transform(dataset_df[col])
         label_encoders[col] = le
 
-    # Encode target
     target_encoder = LabelEncoder()
-    df['Category_encoded'] = target_encoder.fit_transform(df['Category'])
+    dataset_df['Category_encoded'] = target_encoder.fit_transform(dataset_df['Category'])
 
-    # Select features
     feature_columns = [
         'Height_m', 'Weight_kg', 'Age', 'Gender', 'PhysicalActivity',
         'FrequentConsumptionHighCalorieFood', 'FrequentVegetableConsumption',
@@ -523,155 +837,190 @@ def train_model():
         'Screen_Time_Hours', 'Steps_Per_Day', 'Protein_Intake_g', 'Stress_Level_Score'
     ]
 
-    X = df[feature_columns]
-    y = df['Category_encoded']
+    X = dataset_df[feature_columns]
+    y = dataset_df['Category_encoded']
 
-    # Split data
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.2, random_state=42, stratify=y
-    )
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
 
-    # Scale features
     scaler = StandardScaler()
     X_train_scaled = scaler.fit_transform(X_train)
 
-    # Train model
-    print("🤖 Training Random Forest model...")
+    print("🤖 Training model...")
     rf_multi = RandomForestClassifier(n_estimators=100, random_state=42, max_depth=10)
     rf_multi.fit(X_train_scaled, y_train)
 
-    # Calculate accuracy
-    from sklearn.metrics import accuracy_score
     y_pred = rf_multi.predict(scaler.transform(X_test))
     accuracy = accuracy_score(y_test, y_pred)
 
-    print(f"✅ Model trained successfully! Accuracy: {accuracy:.4f}")
+    print(f"✅ Model trained! Accuracy: {accuracy:.4f}")
 
-# Function to analyze reasons for prediction
 def analyze_reasons(category, user_data, top_features):
+    """Analyze and provide detailed reasons for the slimness category"""
     reasons = []
     bmi = user_data['bmi']
 
     if category == 'Underweight':
-        reasons.append(f"Low BMI ({bmi:.1f}) indicates underweight condition")
-        if user_data['protein'] < 50:
-            reasons.append(f"Insufficient protein intake ({user_data['protein']}g) for muscle maintenance")
-        if user_data['steps'] > 10000:
-            reasons.append("High activity level without adequate nutritional support")
-        if user_data['highCalorie'] == 'no':
-            reasons.append("Limited consumption of calorie-dense foods")
+        reasons.append(f"Your BMI is {bmi:.1f}, which falls in the underweight range (BMI < 18.5)")
+        
+        if user_data['protein'] < 60:
+            reasons.append(f"Low protein intake ({user_data['protein']}g/day) - recommended minimum is 60g for your profile")
+        
+        if user_data['steps'] < 5000:
+            reasons.append(f"Low physical activity ({user_data['steps']:,} steps) may indicate muscle loss concerns")
+        
+        if user_data['sleep'] < 7:
+            reasons.append(f"Insufficient sleep ({user_data['sleep']} hours) can affect metabolism and appetite")
+            
+        if user_data['water'] < 2:
+            reasons.append(f"Low water intake ({user_data['water']}L) may affect nutrient absorption")
 
     elif category == 'Healthy Slim':
-        reasons.append(f"Optimal BMI ({bmi:.1f}) within healthy range")
+        reasons.append(f"Your BMI is {bmi:.1f}, which is in the healthy weight range (18.5-24.9)")
+        
         if user_data['steps'] >= 8000:
-            reasons.append("Good daily activity level supporting healthy metabolism")
+            reasons.append(f"Excellent activity level with {user_data['steps']:,} daily steps")
+        
+        if user_data['protein'] >= 60:
+            reasons.append(f"Good protein intake ({user_data['protein']}g/day) supporting lean muscle mass")
+        
         if user_data['vegetables'] == 'yes':
-            reasons.append("Regular vegetable consumption contributing to balanced nutrition")
+            reasons.append("Regular vegetable consumption provides essential micronutrients")
+            
         if user_data['sleep'] >= 7:
-            reasons.append("Adequate sleep supporting overall health")
+            reasons.append(f"Adequate sleep ({user_data['sleep']} hours) supporting metabolic health")
 
     elif category == 'Overweight':
-        reasons.append(f"Elevated BMI ({bmi:.1f}) indicating excess weight")
-        if user_data['steps'] < 5000:
-            reasons.append("Low daily activity level affecting calorie expenditure")
+        reasons.append(f"Your BMI is {bmi:.1f}, which falls in the overweight range (25-29.9)")
+        
+        if user_data['steps'] < 7000:
+            reasons.append(f"Below-average activity level ({user_data['steps']:,} steps) - target is 10,000+ steps")
+        
         if user_data['highCalorie'] == 'yes':
-            reasons.append("Frequent high-calorie food consumption")
+            reasons.append("Frequent high-calorie food consumption contributing to caloric surplus")
+        
         if user_data['screenTime'] > 6:
-            reasons.append("High screen time potentially reducing physical activity")
+            reasons.append(f"High screen time ({user_data['screenTime']} hours) associated with sedentary lifestyle")
+        
+        if user_data['activity'] in ['Sedentary', 'Light']:
+            reasons.append(f"Low physical activity level ({user_data['activity']}) limits calorie expenditure")
 
     elif category == 'Obese':
-        reasons.append(f"High BMI ({bmi:.1f}) indicating obesity")
-        if user_data['steps'] < 4000:
-            reasons.append("Very low daily activity level")
-        if user_data['protein'] > 100 and user_data['highCalorie'] == 'yes':
-            reasons.append("High calorie intake with potential nutritional imbalance")
-        if user_data['sleep'] < 6:
-            reasons.append("Inadequate sleep affecting metabolism and appetite regulation")
-
-    # Add feature-specific reasons
-    for feature in top_features[:2]:
-        feature_name = feature['feature']
-        value = feature['value']
-
-        if feature_name == 'PhysicalActivity' and value in [0, 1]: # Sedentary/Light
-            reasons.append("Low physical activity level impacting energy balance")
-        elif feature_name == 'Protein_Intake_g' and value < 50:
-            reasons.append("Suboptimal protein intake for muscle maintenance")
-        elif feature_name == 'Steps_Per_Day' and value < 6000:
-            reasons.append("Insufficient daily steps for cardiovascular health")
-        elif feature_name == 'Screen_Time_Hours' and value > 6:
-            reasons.append("Excessive screen time affecting activity patterns")
+        reasons.append(f"Your BMI is {bmi:.1f}, which falls in the obese range (BMI ≥ 30)")
+        
+        if user_data['steps'] < 5000:
+            reasons.append(f"Very low activity level ({user_data['steps']:,} steps) - significantly below recommended")
+        
+        if user_data['highCalorie'] == 'yes':
+            reasons.append("Frequent consumption of high-calorie foods creating substantial caloric surplus")
+        
+        if user_data['vegetables'] == 'no':
+            reasons.append("Low vegetable consumption - missing fiber and nutrients that aid weight management")
+        
+        if user_data['sleep'] < 7 or user_data['sleep'] > 9:
+            reasons.append(f"Suboptimal sleep duration ({user_data['sleep']} hours) can disrupt hormones regulating appetite")
+        
+        if user_data['stress'] >= 7:
+            reasons.append(f"High stress levels ({user_data['stress']}/10) can trigger emotional eating and cortisol-related weight gain")
 
     return reasons
 
-# Function to get personalized suggestions
 def get_suggestions(category, user_data):
+    """Generate personalized suggestions and action plan"""
     suggestions = []
     action_plan = []
 
-    bmi = user_data['bmi']
-    steps = user_data['steps']
-    sleep = user_data['sleep']
-    water = user_data['water']
-    stress = user_data['stress']
-    protein = user_data['protein']
-    screen_time = user_data['screenTime']
-    activity = user_data['activity']
+    if category == 'Underweight':
+        suggestions.append("Increase caloric intake by 300-500 calories daily through nutrient-dense foods")
+        suggestions.append(f"Boost protein intake from {user_data['protein']}g to 80-100g daily (eggs, lean meats, legumes)")
+        suggestions.append("Add healthy fats: nuts, avocados, olive oil (calorie-dense and nutritious)")
+        suggestions.append("Eat 5-6 smaller meals throughout the day to increase total intake")
+        
+        if user_data['steps'] < 5000:
+            suggestions.append("Moderate exercise with focus on strength training to build muscle mass")
+        
+        action_plan.extend([
+            "Week 1-2: Add protein shake between meals, increase portions by 20%",
+            "Week 3-4: Start strength training 3x/week, track calorie intake daily",
+            "Week 5-6: Add healthy snacks (nuts, dried fruits), continue building muscle",
+            "Week 7-8: Reassess progress, adjust caloric intake based on weight gain"
+        ])
 
-    if category in ['Underweight', 'Healthy Slim']:
-        if bmi < 18.5:
-            suggestions.append("Increase daily calorie intake by 300-500 calories with nutrient-dense foods")
-            suggestions.append("Focus on protein-rich meals (1.2-1.6g per kg of body weight)")
-            suggestions.append("Incorporate strength training 2-3 times per week")
-            suggestions.append("Eat smaller, more frequent meals throughout the day")
+    elif category == 'Healthy Slim':
+        suggestions.append("Maintain current healthy habits - you're doing great!")
+        suggestions.append(f"Continue balanced nutrition with adequate protein ({user_data['protein']}g)")
+        suggestions.append("Stay hydrated with 2-3L water daily")
+        suggestions.append("Keep up regular physical activity and sleep routine")
+        
+        if user_data['stress'] >= 6:
+            suggestions.append("Practice stress management: meditation, yoga, or deep breathing exercises")
+        
+        action_plan.extend([
+            "Week 1-2: Monitor weight weekly, maintain current routines",
+            "Week 3-4: Add variety to exercise routine to prevent plateaus",
+            "Week 5-6: Try new healthy recipes to maintain dietary enjoyment",
+            "Week 7-8: Set new fitness goals (flexibility, endurance, or strength)"
+        ])
 
-            action_plan.extend([
-                "Week 1-2: Increase protein intake to 70-80g daily",
-                "Week 3-4: Add 2 strength training sessions weekly",
-                "Week 5-6: Implement 5-6 smaller meals throughout day",
-                "Week 7-8: Monitor weight gain and adjust calories"
-            ])
-        else:
-            suggestions.append("Maintain current balanced diet with proper portion control")
-            suggestions.append("Continue regular physical activity routine")
-            suggestions.append("Monitor weight monthly to maintain stability")
-            suggestions.append("Focus on nutrient timing around workouts")
+    elif category == 'Overweight':
+        suggestions.append(f"Create calorie deficit: reduce daily intake by 300-500 calories for gradual weight loss")
+        suggestions.append(f"Increase daily steps from {user_data['steps']:,} to 10,000+ gradually")
+        suggestions.append("Replace high-calorie processed foods with whole foods (fruits, vegetables, lean proteins)")
+        
+        if user_data['water'] < 2.5:
+            suggestions.append(f"Increase water intake from {user_data['water']}L to 2.5-3L daily to boost metabolism")
+        
+        if user_data['vegetables'] == 'no':
+            suggestions.append("Add vegetables to every meal - they're low-calorie and high in fiber")
+        
+        if user_data['screenTime'] > 5:
+            suggestions.append(f"Reduce screen time from {user_data['screenTime']} to under 4 hours, use saved time for activity")
+        
+        action_plan.extend([
+            "Week 1-2: Track all food intake, add 2,000 extra steps daily, drink water before meals",
+            "Week 3-4: Increase steps to 8,000+, swap one processed meal for whole foods daily",
+            "Week 5-6: Start 30-min cardio 3x/week, aim for 10,000 steps, meal prep healthy lunches",
+            "Week 7-8: Add strength training 2x/week, continue cardio, target 1-2 lbs weight loss/week"
+        ])
 
-            action_plan.extend([
-                "Maintain current exercise routine",
-                "Continue balanced nutrition pattern",
-                "Monthly weight and measurement checks",
-                "Adjust intake based on activity changes"
-            ])
+    elif category == 'Obese':
+        suggestions.append("Create sustainable calorie deficit of 500-750 calories daily for 1-2 lbs/week weight loss")
+        suggestions.append(f"Start movement program: increase steps from {user_data['steps']:,} to 5,000, then 7,500, then 10,000")
+        suggestions.append("Eliminate high-calorie processed foods and sugary beverages completely")
+        suggestions.append("Focus on whole foods: lean proteins, vegetables, fruits, whole grains, healthy fats")
+        
+        if user_data['protein'] < 80:
+            suggestions.append(f"Increase protein to 80-100g daily to preserve muscle during weight loss")
+        
+        if user_data['vegetables'] == 'no':
+            suggestions.append("Make vegetables half of every meal - fills you up with minimal calories")
+        
+        if user_data['sleep'] < 7:
+            suggestions.append(f"Prioritize sleep: increase from {user_data['sleep']} to 7-9 hours to regulate hunger hormones")
+        
+        if user_data['stress'] >= 7:
+            suggestions.append("Address stress through counseling, meditation, or support groups to prevent emotional eating")
+        
+        suggestions.append("Consider consulting healthcare provider for comprehensive weight management plan")
+        
+        action_plan.extend([
+            "Week 1-2: Start food journal, walk 10 min after each meal, remove junk food from home",
+            "Week 3-4: Increase walking to 20 min 3x/day, meal prep on Sundays, drink 8 glasses water",
+            "Week 5-6: Join activity class or gym, increase to 5,000+ steps, focus on protein at meals",
+            "Week 7-8: Work toward 7,500 steps, add light strength training, track weekly progress photos"
+        ])
 
-    # Activity recommendations
-    if steps < 5000:
-        suggestions.append(f"Gradually increase daily steps from {steps} to 8,000-10,000")
-        action_plan.append(f"Increase steps by 1,000 weekly until reaching 8,000")
-
-    if screen_time > 6:
-        suggestions.append(f"Reduce recreational screen time from {screen_time} to under 4 hours")
-        action_plan.append("Implement screen-free time 1 hour before bed")
-
-    if sleep < 7:
-        suggestions.append(f"Increase sleep duration from {sleep} to 7-9 hours nightly")
-        action_plan.append("Establish consistent bedtime routine")
-
-    if water < 2:
-        suggestions.append(f"Increase water intake from {water}L to 2-3L daily")
-        action_plan.append("Carry water bottle and set hourly reminders")
-
-    if stress > 6:
-        suggestions.append("Practice stress management techniques daily")
-        action_plan.append("10-minute meditation or deep breathing daily")
-
-    if protein < 60 and category in ['Underweight', 'Healthy Slim']:
-        suggestions.append(f"Increase protein intake from {protein}g to 70-90g daily")
-        action_plan.append("Add protein source to each meal and snack")
+    # Add sleep recommendations if needed
+    if user_data['sleep'] < 7:
+        suggestions.append(f"Improve sleep from {user_data['sleep']} to 7-9 hours: set consistent bedtime, limit screens 1hr before bed")
+        action_plan.append("Ongoing: Establish bedtime routine, keep bedroom cool and dark, avoid caffeine after 2pm")
+    
+    # Add water recommendations if needed
+    if user_data['water'] < 2:
+        suggestions.append(f"Double water intake from {user_data['water']}L to 2.5-3L: carry water bottle, drink before meals")
+        action_plan.append("Daily: Set hourly water reminders, flavor with lemon/cucumber if plain water is boring")
 
     return suggestions, action_plan
 
-# Routes
 @app.route('/')
 def home():
     return render_template_string(HTML_TEMPLATE)
@@ -680,11 +1029,8 @@ def home():
 def predict():
     try:
         data = request.json
-
-        # Calculate BMI
         bmi = data['weight'] / (data['height'] ** 2)
 
-        # Prepare user input
         user_input = []
         for col in feature_columns:
             if col == 'BMI':
@@ -718,18 +1064,13 @@ def predict():
             elif col == 'Stress_Level_Score':
                 user_input.append(data['stress'])
 
-        # Scale input
         user_input_scaled = scaler.transform([user_input])
-
-        # Predict
         prediction = rf_multi.predict(user_input_scaled)[0]
         probabilities = rf_multi.predict_proba(user_input_scaled)[0]
 
-        # Get category
         category = target_encoder.inverse_transform([prediction])[0]
         confidence = probabilities[prediction]
 
-        # BMI category
         if bmi < 18.5:
             bmi_category = "Underweight"
         elif 18.5 <= bmi < 25:
@@ -739,26 +1080,44 @@ def predict():
         else:
             bmi_category = "Obese"
 
-        # Top features
         importances = rf_multi.feature_importances_
-        top_indices = np.argsort(importances)[-3:][::-1]
+        top_indices = np.argsort(importances)[-5:][::-1]
         top_features = []
         for idx in top_indices:
+            feature_name = feature_columns[idx]
+            feature_value = user_input[idx]
+            
+            # Make feature names more readable
+            readable_names = {
+                'Height_m': 'Height',
+                'Weight_kg': 'Weight',
+                'Age': 'Age',
+                'Gender': 'Gender',
+                'PhysicalActivity': 'Activity Level',
+                'FrequentConsumptionHighCalorieFood': 'High-Calorie Food Intake',
+                'FrequentVegetableConsumption': 'Vegetable Consumption',
+                'BMI': 'Body Mass Index',
+                'Water_Intake_L': 'Water Intake',
+                'Sleep_Hours': 'Sleep Duration',
+                'Sleep_Quality_Score': 'Sleep Quality',
+                'Screen_Time_Hours': 'Screen Time',
+                'Steps_Per_Day': 'Daily Steps',
+                'Protein_Intake_g': 'Protein Intake',
+                'Stress_Level_Score': 'Stress Level'
+            }
+            
             top_features.append({
-                'feature': feature_columns[idx],
-                'value': user_input[idx],
+                'feature': readable_names.get(feature_name, feature_name),
+                'value': round(feature_value, 2) if isinstance(feature_value, float) else feature_value,
                 'importance': importances[idx]
             })
 
-        # Analyze reasons
         user_data_with_bmi = data.copy()
         user_data_with_bmi['bmi'] = bmi
         reasons = analyze_reasons(category, user_data_with_bmi, top_features)
-
-        # Get suggestions and action plan
         suggestions, action_plan = get_suggestions(category, user_data_with_bmi)
 
-        return jsonify({
+        analysis_results = {
             'category': category,
             'confidence': float(confidence),
             'bmi': float(bmi),
@@ -767,31 +1126,73 @@ def predict():
             'reasons': reasons,
             'suggestions': suggestions,
             'action_plan': action_plan
-        })
+        }
+
+        patient_record = data.copy()
+        patient_record['analysis_results'] = analysis_results
+        patient_record['timestamp'] = datetime.datetime.now().isoformat()
+        save_patient_record(patient_record)
+
+        return jsonify(analysis_results)
 
     except Exception as e:
         return jsonify({'error': str(e)}), 400
 
+@app.route('/get_visualizations')
+def get_visualizations():
+    global dataset_df
+
+    chart_base64 = generate_pie_charts()
+
+    # Read original dataset for gender stats
+    df_original = pd.read_csv('augmented_obesity_lifestyle_dataset (1).csv')
+    
+    stats = {
+        'total_records': len(df_original),
+        'avg_age': f"{df_original['Age'].mean():.1f}",
+        'avg_bmi': f"{df_original['BMI'].mean():.1f}",
+        'male_percent': f"{(df_original['Gender'].value_counts().get('Male', 0) / len(df_original) * 100):.1f}",
+        'female_percent': f"{(df_original['Gender'].value_counts().get('Female', 0) / len(df_original) * 100):.1f}"
+    }
+
+    return jsonify({
+        'chart': chart_base64,
+        'stats': stats
+    })
+
+@app.route('/get_dataset')
+def get_dataset():
+    df_original = pd.read_csv('augmented_obesity_lifestyle_dataset (1).csv')
+
+    columns = df_original.columns.tolist()
+    rows = df_original.values.tolist()
+
+    return jsonify({
+        'columns': columns,
+        'rows': rows,
+        'total_rows': len(rows)
+    })
+
 # Main execution
 if __name__ == '__main__':
-    print("🚀 Starting Slimness Prediction Web Application...")
+    print("🚀 Starting Health Analysis Application...")
     print("="*60)
 
-    # Train model
+    init_data_storage()
     train_model()
 
-    # Start ngrok tunnel
+    # Start ngrok tunnel - FIXED VERSION
     port = 5000
-    public_url = ngrok.connect(port)
+    public_url = ngrok.connect(port).public_url  # FIXED: Added .public_url
 
     print("\n" + "="*60)
-    print("✅ SLIMNESS PREDICTION APP IS RUNNING!")
+    print("✅ APPLICATION IS RUNNING!")
     print("="*60)
     print(f"🌐 Public URL: {public_url}")
     print(f"📍 Local URL: http://127.0.0.1:{port}")
     print("="*60)
-    print("\n👉 Click the public URL above to access your app!")
-    print("Press CTRL+C to stop the server\n")
+    print("\n👉 Click the public URL to access your app!")
+    print("📊 Features: Prediction | Data Visualization | Dataset View")
+    print("Press CTRL+C to stop\n")
 
-    # Run Flask app
     app.run(port=port)
